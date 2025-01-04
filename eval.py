@@ -1,4 +1,5 @@
 import comet_ml
+from torch.utils.data import random_split
 import torch.nn as nn
 from tqdm import tqdm
 import torch
@@ -86,7 +87,9 @@ def adjust_learning_rate(optimizer, epoch, eval_args):
         param_group["lr"] = lr
 
 
-def linear_eval(model, train_loader, test_loader, eval_args, num_classes, exp):
+def linear_eval(
+    model, train_loader, test_loader, eval_args, num_classes, exp, plot_name=""
+):
     results = {"lin_train_loss": [], "lin_eval_acc@1": [], "lin_eval_acc@5": []}
 
     if not os.path.exists(eval_args.results_dir):
@@ -102,19 +105,6 @@ def linear_eval(model, train_loader, test_loader, eval_args, num_classes, exp):
     model.encoder.fc.bias.data.zero_()
     model.encoder.fc.weight.requires_grad = True
     model.encoder.fc.bias.requires_grad = True
-
-    ##Debugging- print model architecture
-    # print("Entire Model")
-
-    # print(model)
-
-    # print("--------------------------------------")
-
-    # print("Model encoder")
-
-    # print(model.encoder)
-
-    # return
 
     criterion = nn.CrossEntropyLoss().cuda()
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
@@ -139,10 +129,10 @@ def linear_eval(model, train_loader, test_loader, eval_args, num_classes, exp):
         results["lin_eval_acc@5"].append(lin_eval_acc_5)
         data_frame = pd.DataFrame(data=results, index=range(1, epoch + 1))
         data_frame.to_csv(eval_args.results_dir + "/eval_log.csv", index_label="epoch")
-        exp.log_metric("lin_train_loss", lin_train_loss, step=epoch)
-        exp.log_metric("lin_eval_loss", lin_eval_loss, step=epoch)
-        exp.log_metric("lin_eval_acc_1", lin_eval_acc_1, step=epoch)
-        exp.log_metric("lin_eval_acc_5", lin_eval_acc_5, step=epoch)
+        exp.log_metric("lin_train_loss " + plot_name, lin_train_loss, step=epoch)
+        exp.log_metric("lin_eval_loss " + plot_name, lin_eval_loss, step=epoch)
+        exp.log_metric("lin_eval_acc_1 " + plot_name, lin_eval_acc_1, step=epoch)
+        exp.log_metric("lin_eval_acc_5 " + plot_name, lin_eval_acc_5, step=epoch)
 
 
 def init_eval_cifar10(eval_args):
@@ -167,13 +157,24 @@ def init_eval_cifar10(eval_args):
     )
 
     testset = torchvision.datasets.CIFAR10(
-        root="./data", train=False, download=True, transform=transform_test
+        root="./cifar", train=False, download=True, transform=transform_test
     )
+
+    trainset, valset = random_split(trainset, [40000, 10000])
 
     trainloader = torch.utils.data.DataLoader(
         trainset,
         batch_size=eval_args.batch_size,
         shuffle=True,
+        num_workers=16,
+        drop_last=False,
+        pin_memory=True,
+    )
+
+    valloader = torch.utils.data.DataLoader(
+        valset,
+        batch_size=eval_args.batch_size,
+        shuffle=False,
         num_workers=16,
         drop_last=False,
         pin_memory=True,
@@ -187,8 +188,7 @@ def init_eval_cifar10(eval_args):
         drop_last=False,
         pin_memory=True,
     )
-
-    return trainset, trainloader, testloader
+    return trainset, trainloader, valloader, testloader
 
 
 def init_eval_miniImageNet(eval_args):
@@ -231,16 +231,30 @@ def init_eval_miniImageNet(eval_args):
     trainset = MiniImageNetDataset(
         root_dir="./Dataset/SPLITTED/Train/", mode="eval", transform=train_transform
     )
+    dataset_length = len(trainset)
+    train_size = int(0.8 * dataset_length)
+    val_size = dataset_length - train_size
+
+    # Split the dataset into training and validation sets
+    train_subset, val_subset = random_split(trainset, [train_size, val_size])
 
     trainloader = DataLoader(
-        trainset,
+        train_subset,
         batch_size=eval_args.batch_size,
         shuffle=True,
         num_workers=16,
         pin_memory=True,
     )
 
-    return trainset, trainloader, testloader
+    valloader = DataLoader(
+        val_subset,
+        batch_size=eval_args.batch_size,
+        shuffle=False,
+        num_workers=16,
+        pin_memory=True,
+    )
+
+    return trainset, trainloader, valloader, testloader
 
 
 def main():
@@ -273,8 +287,7 @@ def main():
 
     parser.add_argument(
         "--miniin",
-        default=False,
-        type=bool,
+        action="store_true",
         help="if True, perform linear evaluation on MiniImageNet",
     )
 
@@ -309,7 +322,7 @@ def main():
         default="./eval_results/",
         type=str,
         metavar="PATH",
-        help="path to cache (default: none)",
+        help="where to save results",
     )
 
     parser.add_argument(
@@ -325,6 +338,12 @@ def main():
         default=8192,
         type=int,
         help="Dictionary size of pretrained moco model",
+    )
+    parser.add_argument(
+        "--moco-m",
+        default=0.999,
+        type=float,
+        help="momentum of key encoder in the pretrained model",
     )
 
     eval_args = parser.parse_args()
@@ -351,7 +370,7 @@ def main():
     model = MoCo(
         dim=128,
         K=eval_args.moco_k,
-        m=0.999,
+        m=eval_args.moco_m,
         T=0.07,
         symmetric=False,
     ).cuda()
@@ -359,28 +378,45 @@ def main():
     model.load_state_dict(checkpoint["state_dict"], strict=False)
 
     if eval_args.cifar:
-        trainset, trainloader, testloader = init_eval_cifar10(eval_args)
+        _, trainloader, valloader, testloader = init_eval_cifar10(eval_args)
 
         num_classes = 10
 
         linear_eval(
             model.encoder_query,
             trainloader,
-            testloader,
+            valloader,
             eval_args,
             num_classes,
             exp,
+            "cifar10",
+        )
+
+        # After training the linear prediction head on top of the learned representation, evaluate the performances
+        # of the whole model on the test set.
+        top1_acc, top5_acc, _ = test(
+            model.encoder_query,
+            testloader,
+            nn.CrossEntropyLoss().cuda(),
+            eval_args.epochs,
+            eval_args,
+        )
+
+        print(
+            f"Accuracy on the Test Set: Acc@1: {top1_acc:.2f}%, Acc@5: {top5_acc:.2f}%"
         )
 
     elif eval_args.miniin:
-        trainset, trainloader, testloader = init_eval_miniImageNet(eval_args)
+        _, trainloader, valloader, testloader = init_eval_miniImageNet(eval_args)
+
+        num_classes = 100
 
         linear_eval(
             model.encoder_query,
             trainloader,
-            testloader,
+            valloader,
             eval_args,
-            trainset.num_classes,
+            num_classes,
             exp,
         )
 
