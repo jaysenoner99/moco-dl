@@ -356,6 +356,7 @@ def main():
         "weight-decay": eval_args.wd,
         "moco-k": eval_args.moco_k,
         "schedule": eval_args.schedule,
+        "moco-m": eval_args.moco_m,
     }
 
     exp.log_parameters(parameters)
@@ -367,6 +368,8 @@ def main():
 
     checkpoint = torch.load(eval_args.path, map_location="cuda")
 
+    test_results = dict.fromkeys(["model", "dataset", "test_top1_acc", "test_top5_acc"])
+    test_results["model"] = eval_args.path
     model = MoCo(
         dim=128,
         K=eval_args.moco_k,
@@ -381,7 +384,7 @@ def main():
         _, trainloader, valloader, testloader = init_eval_cifar10(eval_args)
 
         num_classes = 10
-
+        test_results["dataset"] = "cifar"
         linear_eval(
             model.encoder_query,
             trainloader,
@@ -405,12 +408,21 @@ def main():
         print(
             f"Accuracy on the Test Set: Acc@1: {top1_acc:.2f}%, Acc@5: {top5_acc:.2f}%"
         )
+        test_results["test_top1_acc"] = top1_acc
+        test_results["test_top5_acc"] = top5_acc
+
+        data_frame = pd.DataFrame(data=test_results, index=range(3))
+        data_frame.to_csv(eval_args.results_dir + "/log_test_results.csv")
+
+        exp.log_metric("cifar_test_top1_acc", top1_acc)
+        exp.log_metric("cifar_test_top5_acc", top5_acc)
 
     elif eval_args.miniin:
         _, trainloader, valloader, testloader = init_eval_miniImageNet(eval_args)
 
         num_classes = 100
 
+        test_results["dataset"] = "miniin"
         linear_eval(
             model.encoder_query,
             trainloader,
@@ -419,6 +431,28 @@ def main():
             num_classes,
             exp,
         )
+
+        # After training the linear prediction head on top of the learned representation, evaluate the performances
+        # of the whole model on the test set.
+        top1_acc, top5_acc, _ = test(
+            model.encoder_query,
+            testloader,
+            nn.CrossEntropyLoss().cuda(),
+            eval_args.epochs,
+            eval_args,
+        )
+
+        print(
+            f"Accuracy on the Test Set: Acc@1: {top1_acc:.2f}%, Acc@5: {top5_acc:.2f}%"
+        )
+
+        test_results["test_top1_acc"] = top1_acc
+        test_results["test_top5_acc"] = top5_acc
+
+        exp.log_metric("test_top1_acc", top1_acc)
+        exp.log_metric("test_top5_acc", top5_acc)
+        data_frame = pd.DataFrame(data=test_results, index=range(1))
+        data_frame.to_csv(eval_args.results_dir + "/log_test_results.csv")
 
 
 if __name__ == "__main__":

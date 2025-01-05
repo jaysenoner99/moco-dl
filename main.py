@@ -12,14 +12,6 @@ import pandas as pd
 from tqdm import tqdm
 
 
-# MoCo parameters:
-#
-#
-#
-#
-#
-#
-#
 def main():
     parser = argparse.ArgumentParser(description="Train MoCo on MiniImageNet")
     exp = comet_ml.Experiment(
@@ -29,9 +21,9 @@ def main():
         auto_param_logging=False,
     )
 
-    parser.add_argument("--name", default="", type=str, help="name of the project")
+    parser.add_argument("--name", default="", type=str, help="name of the experiment")
 
-    # lr: 0.06 for batch 512 (or 0.03 for batch 256)
+    # pretraining hyperparameters
     parser.add_argument(
         "--lr",
         "--learning-rate",
@@ -64,7 +56,7 @@ def main():
         "--wd", default=1e-4, type=float, metavar="W", help="weight decay"
     )
 
-    # moco specific configs:
+    # moco specific hyperparameters:
     parser.add_argument("--moco-dim", default=128, type=int, help="feature dimension")
     parser.add_argument(
         "--moco-k", default=4096, type=int, help="queue size; number of negative keys"
@@ -79,20 +71,6 @@ def main():
         "--moco-t", default=0.07, type=float, help="softmax temperature"
     )
 
-    # Argument to parse for bn splits
-    # parser.add_argument(
-    #     "--bn-splits",
-    #     default=8,
-    #     type=int,
-    #     help="simulate multi-gpu behavior of BatchNorm in one gpu; 1 is SyncBatchNorm in multi-gpu",
-    # )
-
-    parser.add_argument(
-        "--symmetric",
-        action="store_true",
-        help="use a symmetric loss function that backprops to both crops",
-    )
-
     # knn monitor
     parser.add_argument("--knn-k", default=200, type=int, help="k in kNN monitor")
     parser.add_argument(
@@ -102,7 +80,7 @@ def main():
         help="softmax temperature in kNN monitor; could be different with moco-t",
     )
 
-    # utils
+    # logging and resume checkpoint
     parser.add_argument(
         "--resume",
         default="",
@@ -127,22 +105,20 @@ def main():
             T.RandomGrayscale(p=0.2),
             T.ToTensor(),
             T.Normalize(
-                mean=[0.485, 0.456, 0.406],  # Normalize with ImageNet mean
+                mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
-            ),  # Normalize with ImageNet std
+            ),
         ]
     )
-    # MiniImageNet_mean = [0.4727902,  0.44887177, 0.404713]
-    # MiniImageNet_std = [0.28407582, 0.2758255,  0.29091981]
 
     test_transform = T.Compose(
         [
             T.Resize((224, 224)),
             T.ToTensor(),
             T.Normalize(
-                mean=[0.485, 0.456, 0.406],  # Normalize with ImageNet mean
+                mean=[0.485, 0.456, 0.406],
                 std=[0.229, 0.224, 0.225],
-            ),  # Normalize with ImageNet std
+            ),
         ]
     )
     model = MoCo(
@@ -150,7 +126,6 @@ def main():
         K=args.moco_k,
         m=args.moco_m,
         T=args.moco_t,
-        symmetric=args.symmetric,
     ).cuda()
 
     experiment_name = args.name
@@ -161,7 +136,6 @@ def main():
         "weight_decay": args.wd,
         "moco_k": args.moco_k,
         "moco_m": args.moco_m,
-        "symmetric": args.symmetric,
     }
     exp.log_parameters(parameters)
     train_data = MiniImageNetDataset(
@@ -199,7 +173,7 @@ def main():
         model.parameters(), lr=args.lr, weight_decay=args.wd, momentum=0.9
     )
 
-    # load model if resume
+    # load model if resume is True
     epoch_start = 1
     if args.resume != "":
         checkpoint = torch.load(args.resume)
@@ -208,15 +182,13 @@ def main():
         epoch_start = checkpoint["epoch"] + 1
         print("Loaded from: {}".format(args.resume))
 
-    # logging
     results = {"train_loss": [], "test_acc@1": [], "test_acc@5": []}
     if not os.path.exists(args.results_dir):
         os.mkdir(args.results_dir)
-    # dump args
     with open(args.results_dir + "/args" + experiment_name + ".json", "w") as fid:
         json.dump(args.__dict__, fid, indent=2)
 
-    # training loop
+    # Training loop
     for epoch in tqdm(range(epoch_start, args.epochs + 1)):
         train_loss = train(model, train_loader, optimizer, epoch, args)
         results["train_loss"].append(train_loss)
@@ -225,12 +197,11 @@ def main():
         )
         results["test_acc@1"].append(test_acc_1)
         results["test_acc@5"].append(test_acc_5)
-        # save statistics
         data_frame = pd.DataFrame(data=results, index=range(epoch_start, epoch + 1))
         data_frame.to_csv(
             args.results_dir + "/log" + experiment_name + ".csv", index_label="epoch"
         )
-        # save model
+        # save a checkpoint
         torch.save(
             {
                 "epoch": epoch,

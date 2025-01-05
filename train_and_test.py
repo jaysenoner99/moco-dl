@@ -4,7 +4,7 @@ import torch
 import torch.nn.functional as F
 
 
-# train for a single epoch
+# Train for a single epoch
 def train(net, data_loader, train_optimizer, epoch, args):
     net.train()
     adjust_learning_rate(train_optimizer, epoch, args)
@@ -31,11 +31,12 @@ def train(net, data_loader, train_optimizer, epoch, args):
     return total_loss / total_num
 
 
+# Adjust the learning rate to follow a cosine decay schedule or a multi step decay schedule
 def adjust_learning_rate(optimizer, epoch, args):
     lr = args.lr
     if args.cos:  # cosine lr schedule
         lr *= 0.5 * (1.0 + math.cos(math.pi * epoch / args.epochs))
-    else:  # stepwise lr schedule
+    else:  # multi step lr schedule
         for milestone in args.schedule:
             lr *= 0.1 if epoch >= milestone else 1.0
     for param_group in optimizer.param_groups:
@@ -47,18 +48,15 @@ def test(net, memory_data_loader, test_data_loader, epoch, args):
     classes = memory_data_loader.dataset.num_classes
     total_top1, total_top5, total_num, feature_bank = 0.0, 0.0, 0, []
     with torch.no_grad():
-        # generate feature bank
+        # generate feature bank for the knn monitor
         for data, target in tqdm(memory_data_loader, desc="Feature extracting"):
             feature = net(data.cuda(non_blocking=True))
             feature = F.normalize(feature, dim=1)
             feature_bank.append(feature)
-        # [D, N]
         feature_bank = torch.cat(feature_bank, dim=0).t().contiguous()
-        # [N]
         feature_labels = torch.tensor(
             memory_data_loader.dataset.targets, device=feature_bank.device
         )
-        # loop test data to predict the label by weighted knn search
         test_bar = tqdm(test_data_loader)
         for data, target in test_bar:
             data, target = data.cuda(non_blocking=True), target.cuda(non_blocking=True)
@@ -90,29 +88,22 @@ def test(net, memory_data_loader, test_data_loader, epoch, args):
 
 
 def knn_predict(feature, feature_bank, feature_labels, classes, knn_k, knn_t):
-    # compute cos similarity between each feature vector and feature bank ---> [B, N]
     sim_matrix = torch.mm(feature, feature_bank)
-    # [B, K]
     sim_weight, sim_indices = sim_matrix.topk(k=knn_k, dim=-1)
-    # [B, K]
     sim_labels = torch.gather(
         feature_labels.expand(feature.size(0), -1), dim=-1, index=sim_indices
     )
     sim_weight = (sim_weight / knn_t).exp()
 
-    # counts for each class
     one_hot_label = torch.zeros(
         feature.size(0) * knn_k, classes, device=sim_labels.device
     )
-    # [B*K, C]
     one_hot_label = one_hot_label.scatter(
         dim=-1, index=sim_labels.view(-1, 1), value=1.0
     )
-    # weighted score ---> [B, C]
     pred_scores = torch.sum(
         one_hot_label.view(feature.size(0), -1, classes) * sim_weight.unsqueeze(dim=-1),
         dim=1,
     )
-
     pred_labels = pred_scores.argsort(dim=-1, descending=True)
     return pred_labels
