@@ -19,12 +19,11 @@ class ModelBase(nn.Module):
 
 
 class MoCo(nn.Module):
-    def __init__(self, dim=128, K=4096, m=0.99, T=0.07, symmetric=True):
+    def __init__(self, dim=128, K=4096, m=0.99, T=0.07):
         super().__init__()
         self.K = K
         self.m = m
         self.T = T
-        self.symmetric = symmetric
 
         self.encoder_query = ModelBase(feature_dim=dim)
         self.encoder_key = ModelBase(feature_dim=dim)

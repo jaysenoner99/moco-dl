@@ -375,7 +375,6 @@ def main():
         K=eval_args.moco_k,
         m=eval_args.moco_m,
         T=0.07,
-        symmetric=False,
     ).cuda()
 
     model.load_state_dict(checkpoint["state_dict"], strict=False)
