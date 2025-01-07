@@ -3,6 +3,7 @@ from torch.utils.data import Dataset
 from PIL import Image
 
 
+# Build and load the MiniImageNet Dataset
 class MiniImageNetDataset(Dataset):
     def __init__(self, root_dir, mode, transform=None):
         self.root_dir = root_dir
@@ -25,6 +26,11 @@ class MiniImageNetDataset(Dataset):
 
     def __len__(self):
         return len(self.samples)
+
+    # Overload the __getitem__ method of the DataLoader class.
+    # If the dataset is initialized in train mode, the __getitem__ method will return two augmented views of the
+    # same image.
+    # If the dataset is initialized in eval mode, the __getitem__ method will return an augmented image and its label
 
     def __getitem__(self, idx):
         img_path, label = self.samples[idx]

@@ -3,6 +3,7 @@ import random
 import shutil
 
 
+# Function to split the MiniImageNet Dataset into train and test set
 def split_dataset(root_dir, train_ratio=0.8):
     train_dir = "Dataset/SPLITTED/Train"
     test_dir = "Dataset/SPLITTED/Test"

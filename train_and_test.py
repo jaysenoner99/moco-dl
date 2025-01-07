@@ -43,6 +43,7 @@ def adjust_learning_rate(optimizer, epoch, args):
         param_group["lr"] = lr
 
 
+# Test the model during pretraining using a knn monitor
 def test(net, memory_data_loader, test_data_loader, epoch, args):
     net.eval()
     classes = memory_data_loader.dataset.num_classes
@@ -85,6 +86,17 @@ def test(net, memory_data_loader, test_data_loader, epoch, args):
             )
 
     return total_top1 / total_num * 100, total_top5 / total_num * 100
+
+
+# Function to compute the predicted label using a KNN.
+#
+# -Compute the similarity matrix between the query features and the feature bank using matrix multiplication.
+# -Select the top-k nearest neighbors (similarity scores and indices).
+# -Retrieve the labels of the top-k neighbors and scale the similarity weights using the temperature parameter.
+# -Create one-hot encodings for the labels of the top-k neighbors.
+# -Compute the prediction scores by summing the weighted one-hot encodings for each class.
+# -Return the predicted labels, sorted by descending prediction score.
+#
 
 
 def knn_predict(feature, feature_bank, feature_labels, classes, knn_k, knn_t):

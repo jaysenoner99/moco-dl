@@ -3,10 +3,10 @@ import torchvision.models as models
 import torch
 
 
-class ModelBase(nn.Module):
+class Backbone(nn.Module):
     def __init__(self, feature_dim=128):
-        super(ModelBase, self).__init__()
-
+        super(Backbone, self).__init__()
+        # Initialize a resnet18 model without pretrained weights
         self.encoder = models.resnet18(weights=None)
         self.encoder.fc = nn.Linear(self.encoder.fc.in_features, feature_dim)
 
@@ -18,6 +18,13 @@ class ModelBase(nn.Module):
         return x
 
 
+# Class that defines the MoCo framework:
+# dim: output dim of the Backbone
+# K: dictionary size
+# m: momentum of the key encoder
+# T: Temperature of the Contrastive loss
+
+
 class MoCo(nn.Module):
     def __init__(self, dim=128, K=4096, m=0.99, T=0.07):
         super().__init__()
@@ -25,8 +32,8 @@ class MoCo(nn.Module):
         self.m = m
         self.T = T
 
-        self.encoder_query = ModelBase(feature_dim=dim)
-        self.encoder_key = ModelBase(feature_dim=dim)
+        self.encoder_query = Backbone(feature_dim=dim)
+        self.encoder_key = Backbone(feature_dim=dim)
 
         for param_query, param_key in zip(
             self.encoder_query.parameters(), self.encoder_key.parameters()
@@ -34,26 +41,39 @@ class MoCo(nn.Module):
             param_key.data.copy_(param_query.data)
             param_key.requires_grad = False
 
+        # The MoCo dictionary is created using the torch.nn.Module.register_buffer function:
+        # The function registers a tensor as part of the module but ensures it is not a trainable parameter.
+        # This means it will be saved as part of the model's state(in its state_dict)
+        # but will not be updated during backpropagation.
+
         self.register_buffer("queue", torch.randn(dim, K))
         self.queue = nn.functional.normalize(self.queue, dim=0)
-
+        # Register another buffer to keep track of the position in the queue where
+        # new features will be added
         self.register_buffer("queue_ptr", torch.zeros(1, dtype=torch.long))
 
+    # Update the key encoder via momentum update
     @torch.no_grad()
-    def ema_update(self):
+    def momentum_update(self):
         for param_query, param_key in zip(
             self.encoder_query.parameters(), self.encoder_key.parameters()
         ):
             param_key.data = param_key.data * self.m + param_query.data * (1.0 - self.m)
 
+    # Adds the new feature vectors (keys) to the queue
+    # and removes the oldest ones, maintaining a fixed-size memory bank of negative samples.
     @torch.no_grad()
-    def _dequeue_and_enqueue(self, keys):
+    def dequeue_enqueue(self, keys):
         batch_size = keys.shape[0]
 
         ptr = int(self.queue_ptr)
         # For simplicity i allowed only dictionary sizes that are multiples of the batch size.
         assert self.K % batch_size == 0
 
+        # Add the new batch of features computed by the key encoder to the queue
+        # The keys are transpose to match the dimension of the queue
+        # Keys: batch_size x dim , queue: dim x K , K > batch_size
+        #
         self.queue[:, ptr : ptr + batch_size] = keys.t()
         ptr = (ptr + batch_size) % self.K
 
@@ -82,18 +102,24 @@ class MoCo(nn.Module):
             k = self.unshuffle_batch(k, idx_unshuffle)
 
         # Compute logits to be passed to the Cross Entropy Loss
+        # Both shapes are N(batch_size) x c(feature dimension)
         # Positive logits: Nx1
+        # Batch-wise dot product of query and key representations, unsqueeze to get the right shape
         positive_logits = torch.einsum("nc,nc->n", [q, k]).unsqueeze(-1)
 
+        # Query shape: N x c
+        # Queue shape: c x K
         # Negative logits: NxK
-
+        # Results in (N, K) tensor where each row contains similarities between a query and all negative keys
         negative_logits = torch.einsum("nc,ck->nk", [q, self.queue.clone().detach()])
 
+        # Logits are concatenated along the feature dimension
+        # The first column contains positive pair similarities, the other columns contain negative pair similarities
         # Logits: Nx(1+K)
-
         logits = torch.cat([positive_logits, negative_logits], dim=1)
         logits /= self.T
 
+        # Positive logits correspond to the first column of the logits tensor
         labels = torch.zeros(logits.shape[0], dtype=torch.long).cuda()
         loss = nn.CrossEntropyLoss().cuda()(logits, labels)
 
@@ -101,10 +127,10 @@ class MoCo(nn.Module):
 
     def forward(self, im1, im2):
         with torch.no_grad():
-            self.ema_update()
+            self.momentum_update()
 
         loss, _, k = self.contrastive_loss(im1, im2)
 
-        self._dequeue_and_enqueue(k)
+        self.dequeue_enqueue(k)
 
         return loss

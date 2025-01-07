@@ -13,6 +13,7 @@ from tqdm import tqdm
 
 
 def main():
+    # Setup a comet_ml experiment and parse arguments
     parser = argparse.ArgumentParser(description="Train MoCo on MiniImageNet")
     exp = comet_ml.Experiment(
         api_key="UShvCEYUvHN87Fc42mwbWhPMq",
@@ -96,6 +97,7 @@ def main():
         help="path to cache (default: none)",
     )
     args = parser.parse_args()
+
     # MoCo train augmentations
     train_transform = T.Compose(
         [
@@ -138,6 +140,8 @@ def main():
         "moco_m": args.moco_m,
     }
     exp.log_parameters(parameters)
+
+    # Initialize dataset and dataloaders
     train_data = MiniImageNetDataset(
         root_dir="./Dataset/SPLITTED/Train/", mode="train", transform=train_transform
     )

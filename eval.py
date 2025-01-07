@@ -14,6 +14,8 @@ import torchvision.transforms as T
 import torchvision.datasets
 
 
+# Calculate top1 and top5 accuracy of the pretrained model + final linear prediction head
+# on a test/evaluation set at a given epoch.
 def test(model, test_loader, criterion, epoch, eval_args):
     model.eval()
     total_top1, total_top5, total_num = 0.0, 0.0, 0
@@ -27,11 +29,11 @@ def test(model, test_loader, criterion, epoch, eval_args):
             output = model(images)
             loss = criterion(output, target)
             total_val_loss += loss.item() * images.size(0)
-            _, pred = output.topk(5, 1, True, True)  # get top-5 (includes top-1)
-            pred = pred.t()  # transpose to shape [k, batch_size]
+            _, pred = output.topk(5, 1, True, True)
+            pred = pred.t()
             correct = pred.eq(target.view(1, -1).expand_as(pred))
-            correct_top1 = correct[0].float().sum().item()  # just the first prediction
-            correct_top5 = correct[:5].float().sum().item()  # any of top 5 predictions
+            correct_top1 = correct[0].float().sum().item()
+            correct_top5 = correct[:5].float().sum().item()
             total_top1 += correct_top1
             total_top5 += correct_top5
             total_num += images.size(0)
@@ -52,9 +54,12 @@ def test(model, test_loader, criterion, epoch, eval_args):
     )
 
 
+# Train the final linear layer for a single epoch.
+# The model is set to eval mode in order to not update the running means/stds of the
+# BatchNorm layers in the pretrained resnet18
 def train(model, train_loader, optimizer, criterion, epoch, eval_args):
     model.eval()
-    adjust_learning_rate(optimizer, epoch, eval_args)
+    schedule_lr(optimizer, epoch, eval_args)
     total_loss, total_num, train_bar = 0.0, 0, tqdm(train_loader)
     for image, target in train_bar:
         image = image.cuda(non_blocking=True)
@@ -78,15 +83,16 @@ def train(model, train_loader, optimizer, criterion, epoch, eval_args):
     return total_loss / total_num
 
 
-def adjust_learning_rate(optimizer, epoch, eval_args):
-    """Decay the learning rate based on schedule"""
+# Decay the learning rate based on the selected schedule
+def schedule_lr(optimizer, epoch, eval_args):
     lr = eval_args.lr
-    for milestone in eval_args.schedule:
-        lr *= 0.1 if epoch >= milestone else 1.0
+    for step in eval_args.schedule:
+        lr *= 0.1 if epoch >= step else 1.0
     for param_group in optimizer.param_groups:
         param_group["lr"] = lr
 
 
+# Given a pretrained MoCo model, perform the linear evaluation protocol on a given dataset
 def linear_eval(
     model, train_loader, test_loader, eval_args, num_classes, exp, plot_name=""
 ):
@@ -107,6 +113,8 @@ def linear_eval(
     model.encoder.fc.bias.requires_grad = True
 
     criterion = nn.CrossEntropyLoss().cuda()
+    # Pass the learnable parameters to the optimizer. It is important to pass only the
+    # learnable ones to avoid unnecessary computation
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
     assert len(parameters) == 2
     optimizer = torch.optim.SGD(
@@ -135,11 +143,12 @@ def linear_eval(
         exp.log_metric("lin_eval_acc_5 " + plot_name, lin_eval_acc_5, step=epoch)
 
 
+# Initialize Dataset and Dataloaders for CIFAR10
 def init_eval_cifar10(eval_args):
     transform_train = T.Compose(
         [
             T.RandomCrop(32, padding=4),
-            T.RandomHorizontalFlip(),  # Flips the image horizontally with 50% probability
+            T.RandomHorizontalFlip(),
             T.ToTensor(),
             T.Normalize(mean=[0.4914, 0.4822, 0.4465], std=[0.2470, 0.2435, 0.2616]),
         ]
@@ -191,6 +200,7 @@ def init_eval_cifar10(eval_args):
     return trainset, trainloader, valloader, testloader
 
 
+# Initialize Dataset and Dataloaders for MiniImageNetDataset
 def init_eval_miniImageNet(eval_args):
     train_transform = T.Compose(
         [
@@ -258,13 +268,14 @@ def init_eval_miniImageNet(eval_args):
 
 
 def main():
+    # Setup a comet_ml experiment
     exp = comet_ml.Experiment(
         api_key="UShvCEYUvHN87Fc42mwbWhPMq",
         project_name="Deep Learning",
         auto_metric_logging=False,
         auto_param_logging=False,
     )
-
+    # Parse arguments
     parser = argparse.ArgumentParser(
         description="Linear evaluation of pretrained MoCo model"
     )
@@ -348,6 +359,7 @@ def main():
 
     eval_args = parser.parse_args()
 
+    # Log the parameters on Comet
     parameters = {
         "batch_size": eval_args.batch_size,
         "epochs": eval_args.epochs,
@@ -361,6 +373,7 @@ def main():
 
     exp.log_parameters(parameters)
 
+    # Load a pretrained model(whose path must be specified in eval_args.path)
     if not os.path.isfile(eval_args.path):
         raise FileNotFoundError(f"Checkpoint file not found: {eval_args.path}")
 
@@ -368,6 +381,7 @@ def main():
 
     checkpoint = torch.load(eval_args.path, map_location="cuda")
 
+    # Log results in the local machine
     test_results = dict.fromkeys(["model", "dataset", "test_top1_acc", "test_top5_acc"])
     test_results["model"] = eval_args.path
     model = MoCo(
@@ -379,6 +393,7 @@ def main():
 
     model.load_state_dict(checkpoint["state_dict"], strict=False)
 
+    # Perform linear evaluation on CIFAR10
     if eval_args.cifar:
         _, trainloader, valloader, testloader = init_eval_cifar10(eval_args)
 
@@ -403,7 +418,7 @@ def main():
             eval_args.epochs,
             eval_args,
         )
-
+        # Log results(both in local and with Comet)
         print(
             f"Accuracy on the Test Set: Acc@1: {top1_acc:.2f}%, Acc@5: {top5_acc:.2f}%"
         )
@@ -416,6 +431,7 @@ def main():
         exp.log_metric("cifar_test_top1_acc", top1_acc)
         exp.log_metric("cifar_test_top5_acc", top5_acc)
 
+    # Perform linear evaluation on MiniImageNet
     elif eval_args.miniin:
         _, trainloader, valloader, testloader = init_eval_miniImageNet(eval_args)
 
