@@ -12,6 +12,7 @@ from dataloader import MiniImageNetDataset
 from torch.utils.data import DataLoader
 import torchvision.transforms as T
 import torchvision.datasets
+from torchinfo import summary
 
 
 # Calculate top1 and top5 accuracy of the pretrained model + final linear prediction head
@@ -112,6 +113,16 @@ def linear_eval(
     model.encoder.fc.weight.requires_grad = True
     model.encoder.fc.bias.requires_grad = True
 
+    # Create and print out a summary of the model using torchinfo.summary
+    input, _ = next(iter(train_loader))
+    input = input.cuda()
+    model = model.cuda()
+    summary(
+        model.encoder,
+        input_data=input,
+        col_names=["input_size", "output_size", "num_params"],
+        depth=5,
+    )
     criterion = nn.CrossEntropyLoss().cuda()
     # Pass the learnable parameters to the optimizer. It is important to pass only the
     # learnable ones to avoid unnecessary computation
@@ -124,7 +135,6 @@ def linear_eval(
         weight_decay=eval_args.wd,
     )
 
-    model = model.cuda()
     for epoch in tqdm(range(1, eval_args.epochs + 1)):
         lin_train_loss = train(
             model, train_loader, optimizer, criterion, epoch, eval_args
@@ -283,7 +293,7 @@ def main():
     parser.add_argument(
         "--lr",
         "--learning-rate",
-        default=30,
+        default=0.5,
         type=float,
         metavar="LR",
         help="initial learning rate",
@@ -346,7 +356,7 @@ def main():
 
     parser.add_argument(
         "--moco-k",
-        default=8192,
+        default=4096,
         type=int,
         help="Dictionary size of pretrained moco model",
     )
@@ -357,6 +367,10 @@ def main():
         help="momentum of key encoder in the pretrained model",
     )
 
+    parser.add_argument("--moco-dim", default=128, type=int, help="feature dimension")
+    parser.add_argument(
+        "--moco-t", default=0.07, type=float, help="softmax temperature"
+    )
     eval_args = parser.parse_args()
 
     # Log the parameters on Comet
@@ -369,6 +383,8 @@ def main():
         "moco-k": eval_args.moco_k,
         "schedule": eval_args.schedule,
         "moco-m": eval_args.moco_m,
+        "moco-t": eval_args.moco_t,
+        "moco-dim": eval_args.moco_dim,
     }
 
     exp.log_parameters(parameters)
@@ -385,10 +401,10 @@ def main():
     test_results = dict.fromkeys(["model", "dataset", "test_top1_acc", "test_top5_acc"])
     test_results["model"] = eval_args.path
     model = MoCo(
-        dim=128,
+        dim=eval_args.moco_dim,
         K=eval_args.moco_k,
         m=eval_args.moco_m,
-        T=0.07,
+        T=eval_args.moco_t,
     ).cuda()
 
     model.load_state_dict(checkpoint["state_dict"], strict=False)

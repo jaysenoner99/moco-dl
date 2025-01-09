@@ -42,5 +42,5 @@ def split_dataset(root_dir, train_ratio=0.8):
 
 
 if __name__ == "__main__":
-    root_folder = "/home/jayse/projects/deep_learning/Dataset/CLEAR"
+    root_folder = "Dataset/CLEAR"
     split_dataset(root_folder)

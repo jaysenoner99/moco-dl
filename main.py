@@ -10,6 +10,7 @@ import json
 from train_and_test import train, test
 import pandas as pd
 from tqdm import tqdm
+from torchinfo import summary
 
 
 def main():
@@ -129,7 +130,13 @@ def main():
         m=args.moco_m,
         T=args.moco_t,
     ).cuda()
-
+    # Create and print out a summary of the model using torchinfo.summary
+    summary(
+        model,
+        input_size=[(args.batch_size, 3, 224, 224), (args.batch_size, 3, 224, 224)],
+        col_names=["input_size", "output_size", "num_params"],
+        depth=5,
+    )
     experiment_name = args.name
     parameters = {
         "batch_size": args.batch_size,
