@@ -1,114 +1,101 @@
-Instruction to reproduce the experimental results:
+# MoCo Pretraining on MiniImageNet
 
-Dataset:
+This repository implements a PyTorch-based framework for training a Momentum Contrast (MoCo) model on the MiniImageNet dataset. The pretrained model is evaluated via linear probing on MiniImageNet and CIFAR-10.
 
-MiniImageNet Dataset: https://www.kaggle.com/datasets/arjunashok33/miniimagenet
+## Dataset
 
+The training and evaluation datasets used in this project are:
+- [MiniImageNet](https://www.kaggle.com/datasets/arjunashok33/miniimagenet)
+- CIFAR-10 (downloaded automatically by the PyTorch dataset utilities)
 
-To setup MiniImageNet, download the dataset from the link above and put it into the "Dataset/CLEAR" directory.
-Then run the split_dataset.py script.
+To set up MiniImageNet, download the dataset from the link above and place it into the `Dataset/CLEAR` directory. Then, run the `split_dataset.py` script.
 
+## Installation
 
-MoCo pretraining:
+### Requirements
+Ensure you have the following dependencies installed:
 
---First of all, setup a virtual environment in the project directory, activate it and launch the command:
+```bash
+pip install -r requirements.txt
+```
 
-  pip install -r requirements.txt
+### Clone the Repository
 
-  to install all the required dependencies.
+```bash
+git clone https://github.com/jaysenoner99/moco-dl.git
+cd moco-dl
+```
 
+## MoCo Pretraining
 
---To pretrain a MoCo model on MiniImageNet, run the following command:
+### Setting Up the Virtual Environment
+First, set up a virtual environment in the project directory, activate it, and install dependencies:
 
-  python3 main.py [--name] [--lr] [--epochs] [--schedule] [--cos] [--batch-size] [--moco-dim] [--moco-k] [--moco-m] [--moco-t] 
-                  [--knn-k] [--knn-t] [--resume] [--results-dir]
+```bash
+pip install -r requirements.txt
+```
 
+### Training MoCo
+To pretrain a MoCo model on MiniImageNet, run:
 
-  --name : String
-        Name of the project. Defaults to "".
+```bash
+python3 main.py [--name] [--lr] [--epochs] [--schedule] [--cos] [--batch-size] [--moco-dim] [--moco-k] [--moco-m] [--moco-t] \
+                [--knn-k] [--knn-t] [--resume] [--results-dir]
+```
 
-  --lr : float
-        Initial Learning rate: Defaults to 0.03
+#### Arguments:
+- `--name`: Name of the project (default: "").
+- `--lr`: Initial learning rate (default: 0.03).
+- `--epochs`: Number of training epochs (default: 200).
+- `--schedule`: Milestones for the MultiStepLR learning rate scheduler (default: [120,160]).
+- `--cos`: Use the CosineAnnealingLR learning rate scheduler (default: False).
+- `--batch-size`: Number of samples per minibatch (default: 128).
+- `--wd`: Weight decay of SGD optimizer (default: 1e-4).
+- `--moco-dim`: Output dimension of the final linear layer in the ResNet backbone (default: 128).
+- `--moco-k`: Dimension of the dictionary (queue) in MoCo (default: 4096).
+- `--moco-m`: MoCo momentum of updating key encoder (default: 0.999).
+- `--moco-t`: Softmax temperature for calculating the InfoNCE loss (default: 0.07).
+- `--knn-k`: Number of neighbors in the KNN monitor (default: 200).
+- `--knn-t`: Softmax temperature in the KNN monitor (default: 0.1).
+- `--resume`: Path of the checkpoint to resume (default: "").
+- `--results-dir`: Directory where results will be saved (default: "./results/").
 
-  --epochs: int
-        Number of training epochs. Defaults to 200
+Pretrained models are saved in the `./trained_models/` directory.
 
-  --schedule: List<int>
-        Milestones for the MultiStepLR learning rate scheduler. Defaults to [120,160]
+## MoCo Linear Evaluation on MiniImageNet and CIFAR-10
 
-  --cos: bool
-        If True, use the CosineAnnealingLR learning rate scheduler. Defaults to False
+To evaluate the pretrained MoCo model with linear probing on MiniImageNet or CIFAR-10, run:
 
-  --batch-size: int 
-        Number of samples in the minibatch. Defaults to 128.
+```bash
+python3 eval.py [--lr] [--epochs] [--momentum] [--schedule] [--batch-size] [--moco-dim] [--moco-k] [--moco-m] [--moco-t] \
+                [--cifar] [--miniin] [--results-dir] [--path]
+```
 
-  --wd: float
-        Weight decay of the SGD optimizer. Defaults to 1e-4
+#### Arguments:
+- `--lr`: Learning rate of SGD optimizer (default: 0.5).
+- `--epochs`: Number of training epochs (default: 100).
+- `--momentum`: Momentum of SGD optimizer (default: 0.9).
+- `--schedule`: Milestones for MultiStepLR (default: [60,80]).
+- `--cifar`: Evaluate on CIFAR-10 (default: False).
+- `--miniin`: Evaluate on MiniImageNet (default: False).
+- `--results-dir`: Directory where evaluation results will be saved (default: "./eval_results/").
+- `--path`: Path to the pretrained model to be evaluated (default: "./trained_models/").
 
-  --moco-dim: int 
-        Output dimension of the final linear layer in the ResNet backbone network. Defaults to 128
+Parameters not listed here retain the same values as in the pretraining phase.
 
-  --moco-k: int
-        Dimension of the dictionary(queue) in MoCo. Defaults to 4096
+## Experiment Tracking
 
-  --moco-m: float
-        MoCo momentum of updating key encoder. Defaults to 0.999
+All experiment results are tracked using [Comet](https://www.comet.com/jaysenoner99/deep-learning/view/new/panels). Logs, metrics, and visualizations can be accessed there.
 
-  --moco-t: float
-       Softmax temperature for calculating the InfoNCE loss in MoCo. Defaults to 0.07
+## Results
 
-  --knn-k: int
-       Number of neighbors to be considered in the KNN monitor. Defaults to 200.
-  
-  --knn-t: float
-       Softmax temperature in the KNN monitor. Defaults to 0.1
-       
-  --resume: String
-      Path of the checkpoint that needs to be resumed. Defaults to ""
+The performance of the pretrained model evaluated via linear probing is documented in the Comet dashboard. Metrics such as accuracy and loss trends are available.
 
-  --results-dir: String
-      Path of the directory where the main results will be saved. Defaults to "./results/"
+## Acknowledgments
 
+This implementation is inspired by the original MoCo paper:
+> He, K., Fan, H., Wu, Y., Xie, S., & Girshick, R. (2020). Momentum contrast for unsupervised visual representation learning. In Proceedings of the IEEE/CVF Conference on Computer Vision and Pattern Recognition (pp. 9729-9738).
 
-The obtained pretrained models will be saved under the "./trained_models/" directory.
-
-
-MoCo Linear Evaluation on MiniImageNet and CIFAR10.
-
---To evaluate the pretrained MoCo models in the task of classification on MiniImageNet/CIFAR10 with the linear evaluation protocol,
-  run the following command:
-
-  python3 eval.py [--lr] [--epochs] [--momentum] [--schedule] [--batch-size] [--moco-dim] [--moco-k] [--moco-m] [--moco-t] 
-                  [--cifar] [--miniin] [--results-dir] [--path]
-
-  --lr: float
-      Learning rate of SGD optimizer. Defaults to 0.5 
-
-  --epochs: int
-      Number of training epochs. Defaults to 100
-
-  --momentum: float
-      Momemtum of SGD optimizer. Defaults to 0.9
-
-  --schedule: List<int>
-      Milestones for the MultiStepLR learning rate scheduler. Defaults to [60,80]
-
-  --cifar: bool
-      If True, evaluate the pretrained model by linear probing on CIFAR10
-
-  --miniin: bool
-      If True, evaluate the pretrained model by linear probing on MiniImageNet
-
-  --results-dir: String
-      Path of the directory where the results will be saved. Defaults to "./eval_results/"
-
-  --path: String
-      Path of the pretrained model to be evaluated. Defaults to "./trained_models/"
-
-The parameters that were not listed in this sections are the same of the previous section and have the same default values.
-
-This project logs relevant metrics using Comet ML. The results can be accessed by reaching the following URL:
-
-  https://www.comet.com/jaysenoner99/deep-learning/view/new/panels
-
+## License
+This project is licensed under the MIT License.
 
